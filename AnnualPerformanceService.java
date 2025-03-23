@@ -25,37 +25,55 @@ import java.util.Map.Entry;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
+/**
+ * Service class for calculating and providing annual performance statistics for vehicles.
+ * This service aggregates data from multiple sources and provides comprehensive
+ * performance metrics including mileage, idling times, speeding incidents, and
+ * highway billing data.
+ */
 @Service
 public class AnnualPerformanceService {
 
-
     /**
      * Retrieves an AnnualPerformanceBo object for the given teamId, startTime and endTime.
+     * This method aggregates performance data for all vehicles in the specified team
+     * over the given time period.
      *
      * @param custId the customer id
      * @param teamId the team id
-     * @param startTime the start time
-     * @param endTime the end time
+     * @param startTime the start time of the reporting period
+     * @param endTime the end time of the reporting period
      * @return an AnnualPerformanceBo object containing the performance data of the given team
-     * @throws Exception if there is an error
+     * @throws Exception if there is an error retrieving the data
      */
     public AnnualPerformanceBo getAnnualPerformance(String custId, String teamId, Date startTime, Date endTime) throws Exception {
         AnnualPerformanceBo annualPerformanceBo = new AnnualPerformanceBo();
+        // Get list of car data for the specified team
         List<SimpleCarData> carDataList = GlobalCarDataByTeam.getInstance().getCarDataList(teamId);
+        // Extract unique car identifiers
         List<String> unicodeList = carDataList.stream().map(SimpleCarData::getCarUnicode).collect(Collectors.toList());
+        // Define the types of statistics to collect
         List<SimpleStatisType> reportTypeList = new ArrayList<>(Arrays.asList(MILEAGE, IDLING, OVER_SPEED, FREEWAY_CHARGE_DATA));
+        // Map to store statistics data by type
         Map<SimpleStatisType, List<tb_car_simple_statis>> simpleDataMap = new EnumMap<>(SimpleStatisType.class);
+        
+        // Retrieve statistics data for each type
         for (SimpleStatisType type : reportTypeList) {
             simpleDataMap.put(type, EupStatisFactory.getInstance().getSimpleStatisRepository().select(custId, unicodeList, startTime, endTime, type));
         }
+        
+        // Process and build the performance data
         for (Entry<SimpleStatisType, List<tb_car_simple_statis>> entry : simpleDataMap.entrySet()) {
             buildAnnualPerformanceBo(annualPerformanceBo, entry.getValue(), entry.getKey());
         }
+        
         return annualPerformanceBo;
     }
 
     /**
      * Builds an AnnualPerformanceBo from a list of tb_car_simple_statis objects based on the given type.
+     * This method processes raw statistics data and organizes it into monthly performance metrics.
+     *
      * @param bo the AnnualPerformanceBo to build
      * @param statistic the list of tb_car_simple_statis objects to build from
      * @param type the type of statistic to build
@@ -64,13 +82,20 @@ public class AnnualPerformanceService {
         if (statistic == null || statistic.isEmpty()) {
             return;
         }
+        
         List<AnnualPerformanceStatistic> annualPerformance = new ArrayList<>();
+        // Map to store data organized by statistical date
         Map<StatisDate, List<Double>> dataMap = new EnumMap<>(StatisDate.class);
+        // Array to store total values for each month
         double[] totalValue = new double[12];
+        
+        // Process each car's statistics
         for (tb_car_simple_statis carSimpleStatistic : statistic) {
             carSimpleStatistic.getDataMap().forEach((key, value) ->
                 dataMap.computeIfAbsent(key, k -> new ArrayList<>()).add(value));
         }
+        
+        // Aggregate data by month
         for (Entry<StatisDate, List<Double>> entry : dataMap.entrySet()) {
             String columnName = entry.getKey().getColumnName().toLowerCase();
             List<Double> values = entry.getValue();
@@ -83,12 +108,16 @@ public class AnnualPerformanceService {
                 }
             }
         }
+        
+        // Create monthly performance statistics
         for (int i = 0; i < 12; i++) {
             AnnualPerformanceStatistic performanceStatistic = new AnnualPerformanceStatistic();
             performanceStatistic.setMonth(i + 1);
             performanceStatistic.setValue(BigDecimal.valueOf(totalValue[i]).setScale(1, RoundingMode.HALF_UP).doubleValue());
             annualPerformance.add(performanceStatistic);
         }
+        
+        // Store the results in the appropriate field based on the statistic type
         switch (type) {
             case MILEAGE:
                 bo.setDistanceTravelled(annualPerformance);
@@ -105,7 +134,6 @@ public class AnnualPerformanceService {
             default:
                 break;
         }
-
     }
 
     /**
